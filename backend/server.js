@@ -35,8 +35,7 @@ const ai = new GoogleGenAI({
 });
 
 // Use standard model name without the "models/" prefix
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 // --------------------------------------------------
 // MULTER
 // --------------------------------------------------
