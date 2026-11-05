@@ -16,7 +16,7 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173'
+  origin: process.env.CLIENT_URL || 'http://localhost:5173' || "https://tamil-exam.vercel.app/"
 }));
 
 // --------------------------------------------------
