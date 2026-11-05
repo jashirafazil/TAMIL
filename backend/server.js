@@ -34,7 +34,7 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY
 });
 
-// Using latest available fast flash model
+// Using latest available flash model
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
 // --------------------------------------------------
@@ -96,7 +96,24 @@ const parseGeminiJSON = (response) => {
   }
 };
 
-// Optimized image compression: lowers max dimensions to 1600px for faster vision parsing
+// Automatic retry wrapper for handling 503 high demand errors gracefully
+const generateWithRetry = async (aiInstance, payload, retries = 3, delay = 3000) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await aiInstance.models.generateContent(payload);
+    } catch (error) {
+      // Check if error is a 503 Service Unavailable / high demand
+      const isUnavailable = error.status === 503 || error.message?.includes('503') || error.message?.includes('unavailable');
+      if (isUnavailable && i < retries - 1) {
+        console.warn(`Model overloaded (503). Retrying in ${delay}ms... (Attempt ${i + 1} of ${retries})`);
+        await new Promise(res => setTimeout(res, delay));
+      } else {
+        throw error;
+      }
+    }
+  }
+};
+
 const prepareImages = async (files) => {
   const totalSize = files.reduce((total, file) => total + file.size, 0);
 
@@ -358,8 +375,8 @@ app.post('/api/chapters/:chapterId/generate', upload.array('images', 6), async (
     console.log('Processing images...');
     const imageParts = await prepareImages(req.files);
 
-    console.log('Sending single-pass request to Gemini...');
-    const generationResponse = await ai.models.generateContent({
+    console.log('Sending single-pass request to Gemini with retry support...');
+    const generationResponse = await generateWithRetry(ai, {
       model: MODEL,
       contents: [{
         role: 'user',
