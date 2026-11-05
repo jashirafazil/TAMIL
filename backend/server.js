@@ -34,8 +34,9 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY
 });
 
-// Use standard model name without the "models/" prefix
+// Using latest available fast flash model
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+
 // --------------------------------------------------
 // MULTER
 // --------------------------------------------------
@@ -95,6 +96,7 @@ const parseGeminiJSON = (response) => {
   }
 };
 
+// Optimized image compression: lowers max dimensions to 1600px for faster vision parsing
 const prepareImages = async (files) => {
   const totalSize = files.reduce((total, file) => total + file.size, 0);
 
@@ -108,15 +110,12 @@ const prepareImages = async (files) => {
     const compressedBuffer = await sharp(file.buffer)
       .rotate()
       .resize({
-        width: 2200,
-        height: 2200,
+        width: 1600,
+        height: 1600,
         fit: 'inside',
         withoutEnlargement: true
       })
-      .jpeg({
-        quality: 92,
-        mozjpeg: true
-      })
+      .jpeg({ quality: 80 })
       .toBuffer();
 
     imageParts.push({
@@ -316,13 +315,22 @@ app.delete('/api/chapters/:chapterId/questions/:questionId', async (req, res) =>
 });
 
 // --------------------------------------------------
-// GEMINI PROMPT & GENERATION ROUTE
+// SINGLE-PASS GEMINI PROMPT & GENERATION ROUTE
 // --------------------------------------------------
 
-const GENERATION_PROMPT = `
-You are an expert CBSE Class 10 Tamil teacher, Tamil textbook researcher and board examination question setter.
-Generate original questions in the style of CBSE Class 10 Tamil பாடல் வினா based on the uploaded textbook images.
-Return ONLY valid JSON in this format:
+const SINGLE_PASS_PROMPT = `
+You are an expert CBSE Class 10 Tamil teacher and board examiner.
+Read the provided Tamil textbook page images carefully.
+
+Generate accurate CBSE Class 10 Tamil பாடல் வினா multiple-choice questions directly supported by the text in the images.
+
+STRICT ACCURACY INSTRUCTIONS:
+- Only generate questions whose answers are explicitly present in the provided text.
+- Provide exact Tamil phrase from the text in "sourceEvidence" for each question.
+- Perform strict self-verification to ensure exactly one option is correct and options are plausible.
+- Generate at most 5-8 high-quality questions.
+
+Return ONLY valid JSON in this exact structure:
 {
   "passage": "அசல் பாடல் அல்லது உரையின் வாசிக்கக்கூடிய பகுதி",
   "questions": [
@@ -333,14 +341,6 @@ Return ONLY valid JSON in this format:
       "sourceEvidence": "பாடப்பகுதியில் உள்ள ஆதார வரி"
     }
   ]
-}
-`;
-
-const VERIFICATION_PROMPT = `
-You are an independent CBSE Class 10 Tamil textbook examiner. Verify each candidate question against the provided textbook images.
-Return ONLY valid JSON in this format:
-{
-  "approvedQuestionIndexes": [0, 2, 3]
 }
 `;
 
@@ -355,13 +355,15 @@ app.post('/api/chapters/:chapterId/generate', upload.array('images', 6), async (
       return res.status(400).json({ success: false, error: 'Upload at least one textbook image.' });
     }
 
+    console.log('Processing images...');
     const imageParts = await prepareImages(req.files);
 
+    console.log('Sending single-pass request to Gemini...');
     const generationResponse = await ai.models.generateContent({
       model: MODEL,
       contents: [{
         role: 'user',
-        parts: [{ text: GENERATION_PROMPT }, ...imageParts]
+        parts: [{ text: SINGLE_PASS_PROMPT }, ...imageParts]
       }],
       config: {
         responseMimeType: 'application/json',
@@ -374,31 +376,18 @@ app.post('/api/chapters/:chapterId/generate', upload.array('images', 6), async (
       throw new Error('Gemini returned an invalid question structure.');
     }
 
-    const candidateQuestions = generated.questions.filter(q => !validateQuestion(q) && typeof q.sourceEvidence === 'string' && q.sourceEvidence.trim().length > 0);
-
-    if (!candidateQuestions.length) {
-      return res.status(422).json({ success: false, error: 'No valid questions could be generated from these pages.', savedCount: 0 });
-    }
-
-    const verificationResponse = await ai.models.generateContent({
-      model: MODEL,
-      contents: [{
-        role: 'user',
-        parts: [{ text: VERIFICATION_PROMPT + '\n\nCANDIDATE QUESTIONS:\n' + JSON.stringify(candidateQuestions) }, ...imageParts]
-      }],
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.1
-      }
-    });
-
-    const verification = parseGeminiJSON(verificationResponse);
-    const approvedIndexes = [...new Set((verification.approvedQuestionIndexes || []).filter(i => Number.isInteger(i) && i >= 0 && i < candidateQuestions.length))];
-
-    const verifiedQuestions = approvedIndexes.map(i => candidateQuestions[i]).filter(Boolean);
+    const verifiedQuestions = generated.questions.filter(q => 
+      !validateQuestion(q) && 
+      typeof q.sourceEvidence === 'string' && 
+      q.sourceEvidence.trim().length > 0
+    );
 
     if (!verifiedQuestions.length) {
-      return res.status(422).json({ success: false, error: 'The generated questions did not pass textbook verification.', savedCount: 0 });
+      return res.status(422).json({ 
+        success: false, 
+        error: 'No valid questions could be generated from these pages.', 
+        savedCount: 0 
+      });
     }
 
     const questionsToSave = verifiedQuestions.map(q => ({
@@ -415,9 +404,8 @@ app.post('/api/chapters/:chapterId/generate', upload.array('images', 6), async (
 
     return res.status(201).json({
       success: true,
-      message: 'Questions generated, verified and saved successfully.',
-      generatedCount: candidateQuestions.length,
-      verifiedCount: verifiedQuestions.length,
+      message: 'Questions generated and saved successfully.',
+      generatedCount: generated.questions.length,
       savedCount: savedQuestions.length,
       passage: generated.passage,
       questions: savedQuestions,
@@ -431,7 +419,7 @@ app.post('/api/chapters/:chapterId/generate', upload.array('images', 6), async (
 });
 
 // --------------------------------------------------
-// ERROR HANDLER & START SERVER
+// ERROR HANDLER & SERVER START
 // --------------------------------------------------
 
 app.use((error, req, res, next) => {
