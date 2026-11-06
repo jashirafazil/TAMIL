@@ -7,7 +7,7 @@ import {
   Pencil, Download, Upload, LogOut, Moon, Sun, Search,
   ChevronRight, FileText, Sparkles, X, Check, ArrowLeft,
   ShieldCheck, Menu, RefreshCw, Camera, Image,
-  ClipboardList, RotateCcw, Save, CircleHelp, AlertCircle
+  ClipboardList, RotateCcw, Save, CircleHelp, AlertCircle, Activity, Gauge, Server, Zap, Database
 } from 'lucide-react';
 import './App.css';
 
@@ -167,6 +167,22 @@ export default function App() {
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [stats, setStats] = useState('Hide')
+  // AI USAGE & SERVER HEALTH
+  const [health, setHealth] = useState(null);
+  const [usageData, setUsageData] = useState(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageError, setUsageError] = useState('');
+  // CUSTOM CONFIRMATION MODAL
+  const [confirmModal, setConfirmModal] = useState({
+    open: false,
+    title: '',
+    message: '',
+    confirmText: 'Delete',
+    onConfirm: null
+  });
+
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
   // CHAPTER MODAL
   const [chapterModal, setChapterModal] = useState(false);
@@ -210,6 +226,60 @@ export default function App() {
       err?.message ||
       'Something went wrong.'
     );
+  };
+
+  // --------------------------------------------------
+  // CUSTOM CONFIRMATION FUNCTIONS
+  // --------------------------------------------------
+
+  const openConfirm = ({
+    title,
+    message,
+    confirmText = 'Delete',
+    onConfirm
+  }) => {
+    setConfirmModal({
+      open: true,
+      title,
+      message,
+      confirmText,
+      onConfirm
+    });
+  };
+
+  const closeConfirm = () => {
+    if (confirmLoading) return;
+
+    setConfirmModal({
+      open: false,
+      title: '',
+      message: '',
+      confirmText: 'Delete',
+      onConfirm: null
+    });
+  };
+
+  const executeConfirm = async () => {
+    if (!confirmModal.onConfirm || confirmLoading) return;
+
+    try {
+      setConfirmLoading(true);
+      setError('');
+
+      await confirmModal.onConfirm();
+
+      setConfirmModal({
+        open: false,
+        title: '',
+        message: '',
+        confirmText: 'Delete',
+        onConfirm: null
+      });
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setConfirmLoading(false);
+    }
   };
 
   // --------------------------------------------------
@@ -276,6 +346,70 @@ export default function App() {
       setLoadingChapters(false);
     }
   }, []);
+  // --------------------------------------------------
+  // AI USAGE & SERVER HEALTH
+  // --------------------------------------------------
+
+  // --------------------------------------------------
+  // AI USAGE & SERVER HEALTH
+  // --------------------------------------------------
+
+  const loadUsage = useCallback(async () => {
+    if (role !== 'teacher') return;
+
+    setUsageLoading(true);
+    setUsageError('');
+
+    try {
+      // Fetch both endpoints independently.
+      const results = await Promise.allSettled([
+        api.get('/api/health'),
+        api.get('/api/usage')
+      ]);
+
+      const healthResult = results[0];
+      const usageResult = results[1];
+
+      let errors = [];
+
+      if (healthResult.status === 'fulfilled') {
+        setHealth(getPayload(healthResult.value));
+      } else {
+        console.error('Health endpoint error:', healthResult.reason);
+        setHealth(null);
+        errors.push('Server health information unavailable.');
+      }
+
+      if (usageResult.status === 'fulfilled') {
+        setUsageData(getPayload(usageResult.value));
+      } else {
+        console.error('Usage endpoint error:', usageResult.reason);
+        setUsageData(null);
+        errors.push('Usage information unavailable.');
+      }
+
+      if (errors.length) {
+        setUsageError(errors.join(' '));
+      }
+    } catch (err) {
+      console.error('Usage dashboard error:', err);
+      setUsageError(getErrorMessage(err));
+    } finally {
+      setUsageLoading(false);
+    }
+  }, [role]);
+
+  useEffect(() => {
+    if (role !== 'teacher') return;
+
+    loadUsage();
+
+    const interval = window.setInterval(() => {
+      loadUsage();
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, [role, loadUsage]);
 
   useEffect(() => {
     if (role === 'teacher' || role === 'student') {
@@ -290,6 +424,7 @@ export default function App() {
     const updated = getChapter(getPayload(response));
 
     setActiveChapter(updated);
+
     setChapters(prev =>
       prev.map(ch => ch._id === updated._id ? updated : ch)
     );
@@ -371,29 +506,35 @@ export default function App() {
     }
   };
 
-  const deleteChapter = async chapter => {
-    if (!window.confirm(`Delete "${chapter.title}" and all its questions?`)) {
-      return;
-    }
+  // DELETE CHAPTER
+  const deleteChapter = chapter => {
+    openConfirm({
+      title: 'Delete this chapter?',
+      message: `Are you sure you want to delete "${chapter.title}"? All questions inside this chapter will also be permanently deleted.`,
+      confirmText: 'Delete chapter',
 
-    setLoading(true);
-    setError('');
+      onConfirm: async () => {
+        setLoading(true);
+        setError('');
 
-    try {
-      await api.delete(`/api/chapters/${chapter._id}`);
+        try {
+          await api.delete(`/api/chapters/${chapter._id}`);
 
-      if (activeChapter?._id === chapter._id) {
-        setActiveChapter(null);
-        setActivePage('overview');
+          if (activeChapter?._id === chapter._id) {
+            setActiveChapter(null);
+            setActivePage('overview');
+          }
+
+          setChapters(prev =>
+            prev.filter(item => item._id !== chapter._id)
+          );
+
+          notify('Chapter deleted successfully.');
+        } finally {
+          setLoading(false);
+        }
       }
-
-      await loadChapters();
-      notify('Chapter deleted.');
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
   // --------------------------------------------------
@@ -460,12 +601,14 @@ export default function App() {
           `/api/chapters/${activeChapter._id}/questions/${editingQuestion._id}`,
           body
         );
+
         notify('Question updated.');
       } else {
         await api.post(
           `/api/chapters/${activeChapter._id}/questions`,
           body
         );
+
         notify('Question added.');
       }
 
@@ -478,43 +621,81 @@ export default function App() {
     }
   };
 
-  const deleteQuestion = async question => {
-    if (!window.confirm('Delete this question?')) return;
+  // DELETE QUESTION
+  const deleteQuestion = question => {
+    openConfirm({
+      title: 'Delete this question?',
+      message: 'This question will be permanently removed from the chapter question bank.',
+      confirmText: 'Delete question',
 
-    setLoading(true);
-    setError('');
+      onConfirm: async () => {
+        setLoading(true);
+        setError('');
 
-    try {
-      await api.delete(
-        `/api/chapters/${activeChapter._id}/questions/${question._id}`
-      );
+        try {
+          await api.delete(
+            `/api/chapters/${activeChapter._id}/questions/${question._id}`
+          );
 
-      await refreshActiveChapter();
-      notify('Question deleted.');
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
+          await refreshActiveChapter();
+
+          notify('Question deleted successfully.');
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
   };
 
-  const clearChapterQuestions = async () => {
-    if (!activeChapter?._id) return;
+  // CLEAR ALL QUESTIONS
+  const clearChapterQuestions = () => {
+    if (!activeChapter?._id || !questions.length) return;
 
-    if (!window.confirm('Delete all questions in this chapter?')) return;
+    openConfirm({
+      title: 'Clear all questions?',
+      message: `This will permanently delete all ${questions.length} questions from "${activeChapter.title}". This action cannot be undone.`,
+      confirmText: 'Clear all questions',
 
-    setLoading(true);
-    setError('');
+      onConfirm: async () => {
+        setLoading(true);
+        setError('');
 
-    try {
-      await api.delete(`/api/chapters/${activeChapter._id}/questions`);
-      await refreshActiveChapter();
-      notify('All questions deleted.');
-    } catch (err) {
-      setError(getErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
+        try {
+          const chapterId = activeChapter._id;
+
+          await api.delete(
+            `/api/chapters/${chapterId}/questions`
+          );
+
+          // Immediately update active chapter
+          setActiveChapter(prev => {
+            if (!prev || prev._id !== chapterId) return prev;
+
+            return {
+              ...prev,
+              questions: []
+            };
+          });
+
+          // Immediately update overview chapter data
+          setChapters(prev =>
+            prev.map(chapter =>
+              chapter._id === chapterId
+                ? { ...chapter, questions: [] }
+                : chapter
+            )
+          );
+
+          // Reset quiz data
+          setUserAnswers({});
+          setSubmittedQuiz(false);
+
+          notify('All questions cleared successfully.');
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
   };
 
   // --------------------------------------------------
@@ -710,7 +891,6 @@ export default function App() {
     setProgress('Compressing textbook pages...');
 
     try {
-      // First compression pass
       let compressedImages = await Promise.all(
         images.map(item => compressImage(item.file, 1600, 0.72))
       );
@@ -720,7 +900,6 @@ export default function App() {
         0
       );
 
-      // Second compression pass if necessary
       if (totalSize > 3.8 * 1024 * 1024) {
         setProgress('Optimising images for mobile upload...');
 
@@ -734,7 +913,6 @@ export default function App() {
         );
       }
 
-      // Keep below Vercel's request size limit
       if (totalSize > 4 * 1024 * 1024) {
         throw new Error(
           'Images are still too large. Please upload fewer pages.'
@@ -800,7 +978,7 @@ export default function App() {
 
   const exportPDF = async (questions, title = 'Tamil Questions') => {
     if (!questions?.length) {
-      alert('No questions available to export.');
+      setError('No questions available to export.');
       return;
     }
 
@@ -1046,7 +1224,7 @@ export default function App() {
 
     } catch (err) {
       console.error('PDF Export Error:', err);
-      alert('PDF generation failed. Please try again.');
+      setError('PDF generation failed. Please try again.');
     } finally {
       pdfContainer?.remove();
     }
@@ -1313,6 +1491,17 @@ export default function App() {
             <LayoutDashboard size={18} />
             <span>Overview</span>
           </button>
+          <button
+            className={`sidebar-link ${activePage === 'stats' ? 'active' : ''}`}
+            onClick={() => {
+              setStats('show')
+              setActivePage('stats');
+
+            }}
+          >
+            <LayoutDashboard size={18} />
+            <span>Stats</span>
+          </button>
 
           <div className="sidebar-section-label sidebar-label-spaced">
             {role === 'teacher' ? 'MANAGE' : 'LEARN'}
@@ -1368,7 +1557,651 @@ export default function App() {
                 <span>{notice}</span>
               </div>
             )}
+            {activePage === 'stats' && (
+              <div>
+              {/* AI USAGE & SERVER HEALTH */}
+                {stats === 'show' && role === 'teacher' && (
+                  <section style={{
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '18px',
+                    padding: '24px',
+                    marginTop: '24px',
+                    color: 'var(--text)',
+                    boxShadow: 'var(--shadow)',
+                  }}>
 
+                    {/* HEADER */}
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: '16px',
+                      marginBottom: '26px',
+                    }}>
+                      <div>
+                        <div style={{
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          letterSpacing: '1.5px',
+                          color: 'var(--primary)',
+                          marginBottom: '7px',
+                        }}>
+                          SYSTEM MONITORING
+                        </div>
+
+                        <h2 style={{
+                          fontSize: '23px',
+                          fontWeight: 750,
+                          margin: 0,
+                          letterSpacing: '-0.7px',
+                        }}>
+                          AI usage & server health
+                        </h2>
+
+                        <p style={{
+                          color: 'var(--muted)',
+                          fontSize: '13px',
+                          margin: '7px 0 0',
+                        }}>
+                          Monitor Gemini API activity and application performance.
+                        </p>
+                      </div>
+
+                      <button
+                        className="button secondary"
+                        onClick={loadUsage}
+                        disabled={usageLoading}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '10px 15px',
+                          borderRadius: '10px',
+                        }}
+                      >
+                        <RefreshCw
+                          size={15}
+                          className={usageLoading ? 'usage-spinning' : ''}
+                        />
+                        Refresh
+                      </button>
+                    </div>
+
+                    {usageError && (
+                      <div className="alert alert-error" style={{ marginBottom: '20px' }}>
+                        <AlertCircle size={17} />
+                        <span>{usageError}</span>
+                      </div>
+                    )}
+
+                    {usageData ? (
+                      <>
+                        {/* SERVER STATUS */}
+                        <div style={{ marginBottom: '28px' }}>
+                          <div style={{
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            color: 'var(--muted)',
+                            marginBottom: '12px',
+                          }}>
+                            SERVICE STATUS
+                          </div>
+
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+                            gap: '12px',
+                          }}>
+
+                            {[
+                              {
+                                label: 'API Server',
+                                value: health?.server === 'online' ? 'Online' : 'Offline',
+                                ok: health?.server === 'online',
+                                icon: <Server size={18} />,
+                              },
+                              {
+                                label: 'MongoDB',
+                                value: health?.database === 'connected'
+                                  ? 'Connected'
+                                  : 'Disconnected',
+                                ok: health?.database === 'connected',
+                                icon: <Database size={18} />,
+                              },
+                              {
+                                label: 'Gemini Model',
+                                value: usageData.model || 'Unknown',
+                                ok: true,
+                                icon: <Zap size={18} />,
+                              },
+                            ].map((item, index) => (
+                              <div key={index} style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px',
+                                padding: '16px',
+                                background: 'var(--surface-2)',
+                                border: '1px solid var(--border)',
+                                borderRadius: '12px',
+                                minWidth: 0,
+                              }}>
+                                <div style={{
+                                  width: '38px',
+                                  height: '38px',
+                                  flexShrink: 0,
+                                  display: 'grid',
+                                  placeItems: 'center',
+                                  borderRadius: '10px',
+                                  background: 'var(--surface-3)',
+                                  color: 'var(--primary)',
+                                }}>
+                                  {item.icon}
+                                </div>
+
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div style={{
+                                    color: 'var(--muted)',
+                                    fontSize: '12px',
+                                    marginBottom: '5px',
+                                  }}>
+                                    {item.label}
+                                  </div>
+
+                                  <strong style={{
+                                    display: 'block',
+                                    fontSize: index === 2 ? '13px' : '15px',
+                                    overflowWrap: 'anywhere',
+                                  }}>
+                                    {item.value}
+                                  </strong>
+                                </div>
+
+                                {index !== 2 && (
+                                  <span style={{
+                                    width: '9px',
+                                    height: '9px',
+                                    flexShrink: 0,
+                                    borderRadius: '50%',
+                                    background: item.ok ? '#16a34a' : '#dc2626',
+                                    boxShadow: `0 0 0 4px ${item.ok
+                                      ? 'rgba(22,163,74,0.12)'
+                                      : 'rgba(220,38,38,0.12)'}`,
+                                  }} />
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* GENERATION METRICS */}
+                        <div style={{ marginBottom: '28px' }}>
+                          <div style={{
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            color: 'var(--muted)',
+                            marginBottom: '12px',
+                          }}>
+                            GENERATION OVERVIEW
+                          </div>
+
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))',
+                            gap: '12px',
+                          }}>
+                            {[
+                              {
+                                label: 'Total attempts',
+                                value: usageData.usage?.totalAttempts ?? 0,
+                                description: 'All requests',
+                                color: 'var(--text)',
+                              },
+                              {
+                                label: 'Successful',
+                                value: usageData.usage?.successfulGenerations ?? 0,
+                                description: 'Completed',
+                                color: '#16a34a',
+                              },
+                              {
+                                label: 'Failed',
+                                value: usageData.usage?.failedGenerations ?? 0,
+                                description: 'Unsuccessful',
+                                color: '#dc2626',
+                              },
+                              {
+                                label: 'Total tokens',
+                                value: (usageData.usage?.totalTokens ?? 0).toLocaleString(),
+                                description: 'Input + output',
+                                color: 'var(--text)',
+                              },
+                            ].map((metric, index) => (
+                              <div key={index} style={{
+                                padding: '17px',
+                                background: 'var(--surface-2)',
+                                border: '1px solid var(--border)',
+                                borderRadius: '12px',
+                              }}>
+                                <div style={{
+                                  fontSize: '12px',
+                                  color: 'var(--muted)',
+                                  marginBottom: '12px',
+                                }}>
+                                  {metric.label}
+                                </div>
+
+                                <div style={{
+                                  fontSize: '27px',
+                                  fontWeight: 750,
+                                  letterSpacing: '-1px',
+                                  color: metric.color,
+                                  lineHeight: 1.2,
+                                }}>
+                                  {metric.value}
+                                </div>
+
+                                <div style={{
+                                  fontSize: '11px',
+                                  color: 'var(--muted)',
+                                  marginTop: '7px',
+                                }}>
+                                  {metric.description}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* REQUEST LIMIT */}
+                        <div style={{
+                          padding: '19px',
+                          background: 'var(--surface-2)',
+                          border: '1px solid var(--border)',
+                          borderRadius: '13px',
+                          marginBottom: '16px',
+                        }}>
+                          {(() => {
+                            const requestLimit = usageData.limits?.requestsPerMinute;
+                            const used = requestLimit?.used ?? 0;
+                            const limit = requestLimit?.limit ?? 3;
+                            const remaining = requestLimit?.remaining ?? 0;
+                            const percentage = limit
+                              ? Math.min(100, (used / limit) * 100)
+                              : 0;
+
+                            return (
+                              <>
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '11px',
+                                  marginBottom: '20px',
+                                }}>
+                                  <div style={{
+                                    width: '38px',
+                                    height: '38px',
+                                    borderRadius: '10px',
+                                    display: 'grid',
+                                    placeItems: 'center',
+                                    background: 'var(--surface-3)',
+                                    color: 'var(--primary)',
+                                  }}>
+                                    <Gauge size={19} />
+                                  </div>
+
+                                  <div>
+                                    <h3 style={{
+                                      fontSize: '15px',
+                                      margin: 0,
+                                      fontWeight: 700,
+                                    }}>
+                                      Application request limit
+                                    </h3>
+                                    <p style={{
+                                      fontSize: '12px',
+                                      color: 'var(--muted)',
+                                      margin: '4px 0 0',
+                                    }}>
+                                      Requests per minute · Application-level limit
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'baseline',
+                                  flexWrap: 'wrap',
+                                  gap: '8px',
+                                  marginBottom: '12px',
+                                }}>
+                                  <div>
+                                    <strong style={{ fontSize: '25px' }}>{used}</strong>
+                                    <span style={{
+                                      color: 'var(--muted)',
+                                      fontSize: '13px',
+                                    }}>
+                                      {' '}/ {limit} requests used
+                                    </span>
+                                  </div>
+
+                                  <span style={{
+                                    color: '#16a34a',
+                                    fontSize: '12px',
+                                    fontWeight: 700,
+                                  }}>
+                                    {remaining} remaining
+                                  </span>
+                                </div>
+
+                                <div style={{
+                                  height: '9px',
+                                  background: 'var(--surface-3)',
+                                  borderRadius: '20px',
+                                  overflow: 'hidden',
+                                }}>
+                                  <div style={{
+                                    width: `${percentage}%`,
+                                    height: '100%',
+                                    background: percentage >= 90
+                                      ? '#dc2626'
+                                      : 'var(--primary)',
+                                    borderRadius: '20px',
+                                    transition: 'width 0.3s ease',
+                                  }} />
+                                </div>
+
+                                <div style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  gap: '10px',
+                                  marginTop: '10px',
+                                  fontSize: '11px',
+                                  color: 'var(--muted)',
+                                }}>
+                                  <span>Rolling 60-second window</span>
+                                  <span>{Math.round(percentage)}% used</span>
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </div>
+
+                        {/* TOKEN USAGE */}
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                          gap: '12px',
+                          marginBottom: '16px',
+                        }}>
+                          {[
+                            {
+                              label: 'Input tokens',
+                              value: usageData.usage?.totalInputTokens ?? 0,
+                              description: 'Sent to Gemini',
+                            },
+                            {
+                              label: 'Output tokens',
+                              value: usageData.usage?.totalOutputTokens ?? 0,
+                              description: 'Generated by Gemini',
+                            },
+                          ].map((item, index) => (
+                            <div key={index} style={{
+                              padding: '18px',
+                              border: '1px solid var(--border)',
+                              borderRadius: '12px',
+                              background: 'var(--surface-2)',
+                            }}>
+                              <div style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                letterSpacing: '0.7px',
+                                color: 'var(--muted)',
+                              }}>
+                                {item.label.toUpperCase()}
+                              </div>
+
+                              <div style={{
+                                fontSize: '25px',
+                                fontWeight: 750,
+                                marginTop: '10px',
+                                letterSpacing: '-0.7px',
+                              }}>
+                                {Number(item.value).toLocaleString()}
+                              </div>
+
+                              <p style={{
+                                fontSize: '12px',
+                                color: 'var(--muted)',
+                                margin: '5px 0 0',
+                              }}>
+                                {item.description}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* GENERATION CAPACITY */}
+                        <div style={{
+                          padding: '19px',
+                          background: 'var(--surface-2)',
+                          border: '1px solid var(--border)',
+                          borderRadius: '13px',
+                          marginBottom: '16px',
+                        }}>
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            marginBottom: '18px',
+                          }}>
+                            <Gauge size={19} color="var(--primary)" />
+                            <div>
+                              <h3 style={{
+                                margin: 0,
+                                fontSize: '15px',
+                              }}>
+                                Generation capacity
+                              </h3>
+                              <p style={{
+                                margin: '4px 0 0',
+                                fontSize: '12px',
+                                color: 'var(--muted)',
+                              }}>
+                                Simultaneous application generation slots
+                              </p>
+                            </div>
+                          </div>
+
+                          {(() => {
+                            const active = usageData.limits?.activeGenerations ?? 0;
+                            const maximum = usageData.limits?.maxConcurrentGenerations ?? 2;
+                            const available = usageData.limits?.remainingGenerationSlots ?? 0;
+                            const percentage = maximum
+                              ? Math.min(100, (active / maximum) * 100)
+                              : 0;
+
+                            return (
+                              <>
+                                <div style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  gap: '12px',
+                                  flexWrap: 'wrap',
+                                  marginBottom: '12px',
+                                }}>
+                                  <div>
+                                    <strong style={{ fontSize: '25px' }}>{active}</strong>
+                                    <span style={{
+                                      color: 'var(--muted)',
+                                      fontSize: '13px',
+                                    }}>
+                                      {' '}/ {maximum} active
+                                    </span>
+                                  </div>
+
+                                  <span style={{
+                                    color: 'var(--primary)',
+                                    fontWeight: 700,
+                                    fontSize: '13px',
+                                  }}>
+                                    {available} slots available
+                                  </span>
+                                </div>
+
+                                <div style={{
+                                  height: '8px',
+                                  background: 'var(--surface-3)',
+                                  borderRadius: '20px',
+                                  overflow: 'hidden',
+                                }}>
+                                  <div style={{
+                                    height: '100%',
+                                    width: `${percentage}%`,
+                                    background: 'var(--primary)',
+                                    borderRadius: '20px',
+                                    transition: 'width 0.3s ease',
+                                  }} />
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </div>
+
+                        {/* PERFORMANCE */}
+                        <div style={{ marginBottom: '18px' }}>
+                          <div style={{
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            color: 'var(--muted)',
+                            marginBottom: '12px',
+                          }}>
+                            PERFORMANCE & ERRORS
+                          </div>
+
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))',
+                            gap: '12px',
+                          }}>
+                            {[
+                              {
+                                label: 'Average generation time',
+                                value: `${((usageData.usage?.averageGenerationTimeMs ?? 0) / 1000).toFixed(1)}s`,
+                              },
+                              {
+                                label: 'Images processed',
+                                value: usageData.usage?.totalImagesProcessed ?? 0,
+                              },
+                              {
+                                label: 'Rate-limit errors',
+                                value: usageData.usage?.rateLimitErrors ?? 0,
+                              },
+                              {
+                                label: 'Quota errors',
+                                value: usageData.usage?.quotaErrors ?? 0,
+                              },
+                            ].map((item, index) => (
+                              <div key={index} style={{
+                                padding: '15px',
+                                border: '1px solid var(--border)',
+                                borderRadius: '11px',
+                                background: 'var(--surface-2)',
+                              }}>
+                                <div style={{
+                                  color: 'var(--muted)',
+                                  fontSize: '11px',
+                                  minHeight: '30px',
+                                  lineHeight: 1.4,
+                                }}>
+                                  {item.label}
+                                </div>
+
+                                <strong style={{
+                                  display: 'block',
+                                  fontSize: '22px',
+                                  marginTop: '8px',
+                                }}>
+                                  {item.value}
+                                </strong>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* OFFICIAL QUOTA */}
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: '12px',
+                          padding: '16px',
+                          border: '1px solid var(--border)',
+                          borderRadius: '12px',
+                          background: 'var(--surface-2)',
+                        }}>
+                          <AlertCircle
+                            size={19}
+                            style={{
+                              flexShrink: 0,
+                              color: 'var(--primary)',
+                              marginTop: '2px',
+                            }}
+                          />
+
+                          <div>
+                            <strong style={{ fontSize: '13px' }}>
+                              Official Gemini API quota
+                            </strong>
+
+                            <p style={{
+                              fontSize: '12px',
+                              color: 'var(--muted)',
+                              lineHeight: 1.6,
+                              margin: '6px 0 0',
+                            }}>
+                              This dashboard tracks application-side usage, not your
+                              official Gemini quota. Check Google AI Studio for your
+                              actual RPM, TPM and RPD limits.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* FOOTER */}
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '7px',
+                          justifyContent: 'flex-end',
+                          color: 'var(--muted)',
+                          fontSize: '11px',
+                          marginTop: '17px',
+                        }}>
+                          <Activity size={14} />
+                          Automatically refreshes every 30 seconds
+                        </div>
+
+                      </>
+                    ) : (
+                      <div style={{
+                        minHeight: '180px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '12px',
+                        color: 'var(--muted)',
+                        fontSize: '13px',
+                      }}>
+                        <div className="loader" />
+                        Loading usage information...
+                      </div>
+                    )}
+
+                  </section>
+                )}
+                </div>
+            )}
             {/* OVERVIEW */}
             {activePage === 'overview' && (
               <>
@@ -1442,7 +2275,8 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-
+                
+                <br />
                 <div className="section-heading">
                   <div>
                     <h2>
@@ -1794,11 +2628,10 @@ export default function App() {
                         <div className="option-grid">
                           {question.options?.map((option, optionIndex) => (
                             <div
-                              className={`option-display ${
-                                optionIndex === question.correctOptionIndex
-                                  ? 'correct-option'
-                                  : ''
-                              }`}
+                              className={`option-display ${optionIndex === question.correctOptionIndex
+                                ? 'correct-option'
+                                : ''
+                                }`}
                               key={optionIndex}
                             >
                               <span>({OPTION_LABELS[optionIndex]})</span>
@@ -1902,9 +2735,8 @@ export default function App() {
 
                               {submittedQuiz && (
                                 <span
-                                  className={`answer-status ${
-                                    isCorrect ? 'status-correct' : 'status-wrong'
-                                  }`}
+                                  className={`answer-status ${isCorrect ? 'status-correct' : 'status-wrong'
+                                    }`}
                                 >
                                   {isCorrect ? 'Correct' : 'Incorrect'}
                                 </span>
@@ -2186,6 +3018,88 @@ export default function App() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* CUSTOM DELETE CONFIRMATION MODAL */}
+      {confirmModal.open && (
+        <div
+          className="modal-backdrop confirm-backdrop"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) {
+              closeConfirm();
+            }
+          }}
+        >
+          <div
+            className="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-title"
+          >
+            <div className="confirm-modal-top">
+              <div className="confirm-icon">
+                <Trash2 size={23} />
+              </div>
+
+              <button
+                type="button"
+                className="icon-button confirm-close"
+                onClick={closeConfirm}
+                disabled={confirmLoading}
+                aria-label="Close confirmation"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="confirm-content">
+              <span className="eyebrow">PLEASE CONFIRM</span>
+
+              <h2 id="confirm-title">
+                {confirmModal.title}
+              </h2>
+
+              <p>
+                {confirmModal.message}
+              </p>
+            </div>
+
+            <div className="confirm-warning">
+              <AlertCircle size={16} />
+              <span>This action cannot be undone.</span>
+            </div>
+
+            <div className="confirm-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={closeConfirm}
+                disabled={confirmLoading}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="button danger confirm-delete-button"
+                onClick={executeConfirm}
+                disabled={confirmLoading}
+              >
+                {confirmLoading ? (
+                  <>
+                    <span className="button-spinner" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={16} />
+                    {confirmModal.confirmText}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
