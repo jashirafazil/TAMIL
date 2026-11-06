@@ -7,7 +7,7 @@ import {
   Pencil, Download, Upload, LogOut, Moon, Sun, Search,
   ChevronRight, FileText, Sparkles, X, Check, ArrowLeft,
   ShieldCheck, Menu, RefreshCw, Camera, Image,
-  ClipboardList, RotateCcw, Save, CircleHelp, AlertCircle, Activity, Gauge, Server, Zap, Database
+  ClipboardList, RotateCcw, Save, CircleHelp, AlertCircle, Activity, Gauge, Server, Zap, Database, ChartNoAxesCombined
 } from 'lucide-react';
 import './App.css';
 
@@ -1491,18 +1491,19 @@ export default function App() {
             <LayoutDashboard size={18} />
             <span>Overview</span>
           </button>
-          <button
-            className={`sidebar-link ${activePage === 'stats' ? 'active' : ''}`}
-            onClick={() => {
-              setStats('show')
-              setActivePage('stats');
+          {role === 'teacher' && (
+            <button
+              className={`sidebar-link ${activePage === 'stats' ? 'active' : ''}`}
+              onClick={() => {
+                setStats('show')
+                setActivePage('stats');
 
-            }}
-          >
-            <LayoutDashboard size={18} />
-            <span>Stats</span>
-          </button>
-
+              }}
+            >
+              <ChartNoAxesCombined size={18} />
+              <span>Stats</span>
+            </button>
+          )}
           <div className="sidebar-section-label sidebar-label-spaced">
             {role === 'teacher' ? 'MANAGE' : 'LEARN'}
           </div>
@@ -1559,7 +1560,7 @@ export default function App() {
             )}
             {activePage === 'stats' && (
               <div>
-              {/* AI USAGE & SERVER HEALTH */}
+                {/* AI USAGE & SERVER HEALTH */}
                 {stats === 'show' && role === 'teacher' && (
                   <section style={{
                     background: 'var(--surface)',
@@ -2200,7 +2201,7 @@ export default function App() {
 
                   </section>
                 )}
-                </div>
+              </div>
             )}
             {/* OVERVIEW */}
             {activePage === 'overview' && (
@@ -2275,7 +2276,7 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                
+
                 <br />
                 <div className="section-heading">
                   <div>
