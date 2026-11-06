@@ -3,17 +3,13 @@
   "id": "/",
   "name": "Class X Tamil Question Bank",
   "short_name": "Tamil QB",
-  "description": "Class 10 Tamil Question Bank – Generate, organise, practise and download Tamil questions.",
+  "description": "Class 10 Tamil Question Bank",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
-  "categories": [
-    "education",
-    "productivity"
-  ],
   "icons": [
     {
       "src": "/icons/icon-192.png",
@@ -28,7 +24,7 @@
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-512-maskable.png",
+      "src": "/image.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
