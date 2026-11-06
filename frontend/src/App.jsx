@@ -11,12 +11,20 @@ import {
 } from 'lucide-react';
 import './App.css';
 
-
 const API_BASE = (
   import.meta.env.VITE_BACKEND_URL ||
-  "https://tamil-backend-2027.vercel.app"
-).replace(/\/+$/, "");
-const api = axios.create({ baseURL: API_BASE });
+  (import.meta.env.DEV
+    ? 'http://localhost:5000'
+    : 'https://tamil-backend-2027.vercel.app')
+).replace(/\/+$/, '');
+
+const api = axios.create({
+  baseURL: API_BASE,
+  headers: {
+    Accept: 'application/json'
+  },
+  timeout: 120000
+});
 
 const TEACHER_PIN = '2027';
 const OPTION_LABELS = ['அ', 'ஆ', 'இ', 'ஈ'];
@@ -40,6 +48,74 @@ const createEmptyQuestion = () => ({
   correctOptionIndex: 0
 });
 
+// --------------------------------------------------
+// IMAGE COMPRESSION
+// --------------------------------------------------
+
+const compressImage = (file, maxDimension = 1600, quality = 0.72) => {
+  return new Promise((resolve, reject) => {
+    const image = new window.Image();
+    const url = URL.createObjectURL(file);
+
+    image.onload = () => {
+      try {
+        let { width, height } = image;
+
+        const scale = Math.min(
+          1,
+          maxDimension / Math.max(width, height)
+        );
+
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const context = canvas.getContext('2d');
+
+        if (!context) {
+          throw new Error('Unable to process image.');
+        }
+
+        context.drawImage(image, 0, 0, width, height);
+
+        canvas.toBlob(
+          blob => {
+            URL.revokeObjectURL(url);
+
+            if (!blob) {
+              reject(new Error('Image compression failed.'));
+              return;
+            }
+
+            resolve(
+              new File(
+                [blob],
+                `compressed-${Date.now()}.jpg`,
+                { type: 'image/jpeg' }
+              )
+            );
+          },
+          'image/jpeg',
+          quality
+        );
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        reject(error);
+      }
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Unable to read selected image.'));
+    };
+
+    image.src = url;
+  });
+};
+
 export default function App() {
   // --------------------------------------------------
   // ROLE WITH LOCAL STORAGE
@@ -61,7 +137,6 @@ export default function App() {
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState('');
 
-  // SAVE ROLE AUTOMATICALLY
   useEffect(() => {
     try {
       if (role === 'student' || role === 'teacher') {
@@ -128,6 +203,7 @@ export default function App() {
 
   const getErrorMessage = err => {
     console.error(err);
+
     return (
       err?.response?.data?.error ||
       err?.response?.data?.message ||
@@ -620,7 +696,7 @@ export default function App() {
   }, []);
 
   // --------------------------------------------------
-  // GEMINI GENERATION
+  // GEMINI GENERATION - MOBILE OPTIMISED
   // --------------------------------------------------
 
   const generateQuestions = async () => {
@@ -631,302 +707,350 @@ export default function App() {
 
     setLoading(true);
     setError('');
-    setProgress('Preparing textbook pages...');
+    setProgress('Compressing textbook pages...');
 
     try {
+      // First compression pass
+      let compressedImages = await Promise.all(
+        images.map(item => compressImage(item.file, 1600, 0.72))
+      );
+
+      let totalSize = compressedImages.reduce(
+        (total, file) => total + file.size,
+        0
+      );
+
+      // Second compression pass if necessary
+      if (totalSize > 3.8 * 1024 * 1024) {
+        setProgress('Optimising images for mobile upload...');
+
+        compressedImages = await Promise.all(
+          images.map(item => compressImage(item.file, 1280, 0.55))
+        );
+
+        totalSize = compressedImages.reduce(
+          (total, file) => total + file.size,
+          0
+        );
+      }
+
+      // Keep below Vercel's request size limit
+      if (totalSize > 4 * 1024 * 1024) {
+        throw new Error(
+          'Images are still too large. Please upload fewer pages.'
+        );
+      }
+
+      setProgress('Preparing upload...');
+
       const formData = new FormData();
 
-      images.forEach(item => {
-        formData.append('images', item.file);
+      compressedImages.forEach((file, index) => {
+        formData.append(
+          'images',
+          file,
+          `textbook-page-${index + 1}.jpg`
+        );
       });
 
-      setProgress('Reading textbook pages and generating questions...');
+      setProgress('Uploading pages and generating questions...');
 
       await api.post(
         `/api/chapters/${activeChapter._id}/generate`,
         formData
       );
 
+      setProgress('Refreshing question bank...');
+
       await refreshActiveChapter();
+
       clearImages();
       stopCamera();
 
       notify('Questions generated and saved successfully.');
     } catch (err) {
-      setError(getErrorMessage(err));
+      console.error('AI Generation Error:', err);
+
+      if (err.response) {
+        const status = err.response.status;
+
+        if (status === 413) {
+          setError(
+            'The uploaded images are too large for the server. Please select fewer pages.'
+          );
+        } else {
+          setError(getErrorMessage(err));
+        }
+      } else if (err.request) {
+        setError(
+          'The server did not respond. Check your internet connection and try again.'
+        );
+      } else {
+        setError(getErrorMessage(err));
+      }
     } finally {
       setLoading(false);
       setProgress('');
     }
   };
 
+  // --------------------------------------------------
+  // PDF EXPORT
+  // --------------------------------------------------
 
-
-const exportPDF = async (questions, title = 'Tamil Questions') => {
-  if (!questions?.length) {
-    alert('No questions available to export.');
-    return;
-  }
-
-  let pdfContainer;
-
-  try {
-    pdfContainer = document.createElement('div');
-
-    Object.assign(pdfContainer.style, {
-      position: 'absolute',
-      left: '0',
-      top: '0',
-      width: '718px',
-      margin: '0',
-      padding: '0',
-      background: '#ffffff',
-      color: '#111111',
-      fontFamily: '"Nirmala UI", "Noto Sans Tamil", "Latha", sans-serif',
-      boxSizing: 'border-box',
-      zIndex: '999999'
-    });
-
-    const style = document.createElement('style');
-
-    style.textContent = `
-      .pdf-document {
-        width: 718px;
-        background: #ffffff;
-        color: #111111;
-        font-family: "Nirmala UI", "Noto Sans Tamil", "Latha", sans-serif;
-        box-sizing: border-box;
-      }
-
-      /* GREY SCHOOL HEADER */
-      .pdf-header {
-        background: #e5e7eb;
-        text-align: center;
-        padding: 13px 10px;
-        border: 1px solid #cbd0d6;
-        border-bottom: 2px solid #555;
-        margin-bottom: 12px;
-      }
-
-      .pdf-school-name {
-        font-size: 21px;
-        font-weight: 800;
-        letter-spacing: 0.4px;
-        margin: 0 0 4px;
-        color: #111;
-      }
-
-      .pdf-school-subtitle {
-        font-size: 11px;
-        margin: 0;
-        color: #444;
-        font-weight: 600;
-      }
-
-      .pdf-meta {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 13px;
-        font-weight: 700;
-        padding: 0 3px 8px;
-        border-bottom: 1px solid #999;
-      }
-
-      .pdf-chapter-title {
-        text-align: center;
-        font-size: 16px;
-        font-weight: 800;
-        margin: 12px 0 14px;
-        line-height: 1.5;
-      }
-
-      /* COMPACT QUESTIONS */
-      .pdf-question {
-        margin-bottom: 10px;
-        padding-bottom: 7px;
-        border-bottom: 1px solid #e5e5e5;
-        page-break-inside: avoid;
-        break-inside: avoid;
-        color: #111;
-      }
-
-      .pdf-question-text {
-        font-size: 13px;
-        font-weight: 700;
-        line-height: 1.55;
-        margin-bottom: 5px;
-        overflow-wrap: break-word;
-      }
-
-      /* FOUR OPTIONS IN ONE ROW */
-      .pdf-options {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        column-gap: 8px;
-        row-gap: 3px;
-        padding-left: 12px;
-        align-items: start;
-      }
-
-      .pdf-option {
-        font-size: 11px;
-        line-height: 1.5;
-        overflow-wrap: anywhere;
-        word-break: normal;
-      }
-
-      .pdf-option-label {
-        font-weight: 700;
-        margin-right: 3px;
-      }
-
-      .pdf-footer {
-        text-align: center;
-        font-size: 9px;
-        color: #666;
-        margin-top: 12px;
-        padding-top: 7px;
-        border-top: 1px solid #ddd;
-      }
-    `;
-
-    pdfContainer.appendChild(style);
-
-    const documentContent = document.createElement('div');
-    documentContent.className = 'pdf-document';
-
-    // HEADER
-    const header = document.createElement('div');
-    header.className = 'pdf-header';
-
-    const schoolName = document.createElement('h1');
-    schoolName.className = 'pdf-school-name';
-    schoolName.textContent = 'BLOSSOM PUBLIC SCHOOL';
-
-    const subtitle = document.createElement('p');
-    subtitle.className = 'pdf-school-subtitle';
-    subtitle.textContent = 'QUESTION PAPER';
-
-    header.append(schoolName, subtitle);
-
-    // CLASS AND SUBJECT
-    const meta = document.createElement('div');
-    meta.className = 'pdf-meta';
-
-    const standard = document.createElement('span');
-    standard.textContent = 'STD: X';
-
-    const subject = document.createElement('span');
-    subject.textContent = 'SUBJECT: தமிழ்';
-
-    meta.append(standard, subject);
-
-    // CHAPTER
-    const chapterHeading = document.createElement('h2');
-    chapterHeading.className = 'pdf-chapter-title';
-    chapterHeading.textContent = title;
-
-    documentContent.append(header, meta, chapterHeading);
-
-    // QUESTIONS
-    questions.forEach((question, index) => {
-      const wrapper = document.createElement('div');
-      wrapper.className = 'pdf-question';
-
-      const questionText = document.createElement('div');
-      questionText.className = 'pdf-question-text';
-      questionText.textContent =
-        `${index + 1}. ${question.questionText || ''}`;
-
-      const options = document.createElement('div');
-      options.className = 'pdf-options';
-
-      (question.options || []).slice(0, 4).forEach((option, optionIndex) => {
-        const optionElement = document.createElement('div');
-        optionElement.className = 'pdf-option';
-
-        const label = document.createElement('span');
-        label.className = 'pdf-option-label';
-        label.textContent = `(${OPTION_LABELS[optionIndex]})`;
-
-        const optionText = document.createElement('span');
-        optionText.textContent = option || '';
-
-        optionElement.append(label, optionText);
-        options.appendChild(optionElement);
-      });
-
-      wrapper.append(questionText, options);
-      documentContent.appendChild(wrapper);
-    });
-
-    // FOOTER
-    const footer = document.createElement('div');
-    footer.className = 'pdf-footer';
-    footer.textContent = 'BLOSSOM PUBLIC SCHOOL  •  CLASS X  •  TAMIL';
-
-    documentContent.appendChild(footer);
-    pdfContainer.appendChild(documentContent);
-
-    document.body.appendChild(pdfContainer);
-
-    if (document.fonts?.ready) {
-      await document.fonts.ready;
+  const exportPDF = async (questions, title = 'Tamil Questions') => {
+    if (!questions?.length) {
+      alert('No questions available to export.');
+      return;
     }
 
-    await new Promise(resolve =>
-      requestAnimationFrame(() =>
-        requestAnimationFrame(resolve)
-      )
-    );
+    let pdfContainer;
 
-    const safeTitle = title
-      .replace(/[<>:"/\\|?*]/g, '')
-      .replace(/\s+/g, '_');
+    try {
+      pdfContainer = document.createElement('div');
 
-    await html2pdf()
-      .set({
-        margin: [8, 9, 8, 9],
-        filename: `${safeTitle}_Tamil_Question_Paper.pdf`,
+      Object.assign(pdfContainer.style, {
+        position: 'absolute',
+        left: '0',
+        top: '0',
+        width: '718px',
+        margin: '0',
+        padding: '0',
+        background: '#ffffff',
+        color: '#111111',
+        fontFamily: '"Nirmala UI", "Noto Sans Tamil", "Latha", sans-serif',
+        boxSizing: 'border-box',
+        zIndex: '999999'
+      });
 
-        image: {
-          type: 'jpeg',
-          quality: 0.98
-        },
+      const style = document.createElement('style');
 
-        html2canvas: {
-          scale: 2,
-          useCORS: true,
-          backgroundColor: '#ffffff',
-          logging: false,
-          scrollX: 0,
-          scrollY: 0,
-          windowWidth: 900
-        },
-
-        jsPDF: {
-          unit: 'mm',
-          format: 'a4',
-          orientation: 'portrait',
-          compress: true
-        },
-
-        pagebreak: {
-          mode: ['css', 'legacy'],
-          avoid: ['.pdf-question']
+      style.textContent = `
+        .pdf-document {
+          width: 718px;
+          background: #ffffff;
+          color: #111111;
+          font-family: "Nirmala UI", "Noto Sans Tamil", "Latha", sans-serif;
+          box-sizing: border-box;
         }
-      })
-      .from(documentContent)
-      .save();
 
-  } catch (err) {
-    console.error('PDF Export Error:', err);
-    alert('PDF generation failed. Please try again.');
-  } finally {
-    pdfContainer?.remove();
-  }
-};
+        .pdf-header {
+          background: #e5e7eb;
+          text-align: center;
+          padding: 13px 10px;
+          border: 1px solid #cbd0d6;
+          border-bottom: 2px solid #555;
+          margin-bottom: 12px;
+        }
+
+        .pdf-school-name {
+          font-size: 21px;
+          font-weight: 800;
+          letter-spacing: 0.4px;
+          margin: 0 0 4px;
+          color: #111;
+        }
+
+        .pdf-school-subtitle {
+          font-size: 11px;
+          margin: 0;
+          color: #444;
+          font-weight: 600;
+        }
+
+        .pdf-meta {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 13px;
+          font-weight: 700;
+          padding: 0 3px 8px;
+          border-bottom: 1px solid #999;
+        }
+
+        .pdf-chapter-title {
+          text-align: center;
+          font-size: 16px;
+          font-weight: 800;
+          margin: 12px 0 14px;
+          line-height: 1.5;
+        }
+
+        .pdf-question {
+          margin-bottom: 10px;
+          padding-bottom: 7px;
+          border-bottom: 1px solid #e5e5e5;
+          page-break-inside: avoid;
+          break-inside: avoid;
+          color: #111;
+        }
+
+        .pdf-question-text {
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1.55;
+          margin-bottom: 5px;
+          overflow-wrap: break-word;
+        }
+
+        .pdf-options {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          column-gap: 8px;
+          row-gap: 3px;
+          padding-left: 12px;
+          align-items: start;
+        }
+
+        .pdf-option {
+          font-size: 11px;
+          line-height: 1.5;
+          overflow-wrap: anywhere;
+          word-break: normal;
+        }
+
+        .pdf-option-label {
+          font-weight: 700;
+          margin-right: 3px;
+        }
+
+        .pdf-footer {
+          text-align: center;
+          font-size: 9px;
+          color: #666;
+          margin-top: 12px;
+          padding-top: 7px;
+          border-top: 1px solid #ddd;
+        }
+      `;
+
+      pdfContainer.appendChild(style);
+
+      const documentContent = document.createElement('div');
+      documentContent.className = 'pdf-document';
+
+      const header = document.createElement('div');
+      header.className = 'pdf-header';
+
+      const schoolName = document.createElement('h1');
+      schoolName.className = 'pdf-school-name';
+      schoolName.textContent = 'BLOSSOM PUBLIC SCHOOL';
+
+      const subtitle = document.createElement('p');
+      subtitle.className = 'pdf-school-subtitle';
+      subtitle.textContent = 'QUESTION PAPER';
+
+      header.append(schoolName, subtitle);
+
+      const meta = document.createElement('div');
+      meta.className = 'pdf-meta';
+
+      const standard = document.createElement('span');
+      standard.textContent = 'STD: X';
+
+      const subject = document.createElement('span');
+      subject.textContent = 'SUBJECT: தமிழ்';
+
+      meta.append(standard, subject);
+
+      const chapterHeading = document.createElement('h2');
+      chapterHeading.className = 'pdf-chapter-title';
+      chapterHeading.textContent = title;
+
+      documentContent.append(header, meta, chapterHeading);
+
+      questions.forEach((question, index) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'pdf-question';
+
+        const questionText = document.createElement('div');
+        questionText.className = 'pdf-question-text';
+        questionText.textContent =
+          `${index + 1}. ${question.questionText || ''}`;
+
+        const options = document.createElement('div');
+        options.className = 'pdf-options';
+
+        (question.options || []).slice(0, 4).forEach((option, optionIndex) => {
+          const optionElement = document.createElement('div');
+          optionElement.className = 'pdf-option';
+
+          const label = document.createElement('span');
+          label.className = 'pdf-option-label';
+          label.textContent = `(${OPTION_LABELS[optionIndex]})`;
+
+          const optionText = document.createElement('span');
+          optionText.textContent = option || '';
+
+          optionElement.append(label, optionText);
+          options.appendChild(optionElement);
+        });
+
+        wrapper.append(questionText, options);
+        documentContent.appendChild(wrapper);
+      });
+
+      const footer = document.createElement('div');
+      footer.className = 'pdf-footer';
+      footer.textContent = 'BLOSSOM PUBLIC SCHOOL  •  CLASS X  •  TAMIL';
+
+      documentContent.appendChild(footer);
+      pdfContainer.appendChild(documentContent);
+
+      document.body.appendChild(pdfContainer);
+
+      if (document.fonts?.ready) {
+        await document.fonts.ready;
+      }
+
+      await new Promise(resolve =>
+        requestAnimationFrame(() =>
+          requestAnimationFrame(resolve)
+        )
+      );
+
+      const safeTitle = title
+        .replace(/[<>:"/\\|?*]/g, '')
+        .replace(/\s+/g, '_');
+
+      await html2pdf()
+        .set({
+          margin: [8, 9, 8, 9],
+          filename: `${safeTitle}_Tamil_Question_Paper.pdf`,
+          image: {
+            type: 'jpeg',
+            quality: 0.98
+          },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            logging: false,
+            scrollX: 0,
+            scrollY: 0,
+            windowWidth: 900
+          },
+          jsPDF: {
+            unit: 'mm',
+            format: 'a4',
+            orientation: 'portrait',
+            compress: true
+          },
+          pagebreak: {
+            mode: ['css', 'legacy'],
+            avoid: ['.pdf-question']
+          }
+        })
+        .from(documentContent)
+        .save();
+
+    } catch (err) {
+      console.error('PDF Export Error:', err);
+      alert('PDF generation failed. Please try again.');
+    } finally {
+      pdfContainer?.remove();
+    }
+  };
 
   // --------------------------------------------------
   // QUIZ
@@ -967,7 +1091,6 @@ const exportPDF = async (questions, title = 'Tamil Questions') => {
 
   // --------------------------------------------------
   // ENTRY SCREEN AND TEACHER LOGIN
-  // IMPORTANT: BOTH STATES MUST RENDER THIS SCREEN.
   // --------------------------------------------------
 
   if (role === '' || role === 'teacher-login') {
@@ -1012,10 +1135,7 @@ const exportPDF = async (questions, title = 'Tamil Questions') => {
               </p>
 
               <div className="role-grid">
-                <button
-                  className="role-card"
-                  onClick={enterStudent}
-                >
+                <button className="role-card" onClick={enterStudent}>
                   <div className="role-icon student-icon">
                     <GraduationCap size={27} />
                   </div>
@@ -1056,10 +1176,7 @@ const exportPDF = async (questions, title = 'Tamil Questions') => {
             </>
           ) : (
             <div className="teacher-login-screen">
-              <button
-                className="back-link"
-                onClick={backToRoleSelection}
-              >
+              <button className="back-link" onClick={backToRoleSelection}>
                 <ArrowLeft size={16} />
                 Back to role selection
               </button>
@@ -1455,7 +1572,9 @@ const exportPDF = async (questions, title = 'Tamil Questions') => {
                   <div>
                     <div className="eyebrow">CHAPTER WORKSPACE</div>
                     <h1>{activeChapter.title}</h1>
-                    <p>{activeChapter.description || 'Manage this question bank.'}</p>
+                    <p>
+                      {activeChapter.description || 'Manage this question bank.'}
+                    </p>
                   </div>
 
                   <button
@@ -1483,7 +1602,8 @@ const exportPDF = async (questions, title = 'Tamil Questions') => {
                         <Sparkles size={19} /> Generate from textbook
                       </h2>
                       <p>
-                        Capture or upload up to 6 pages. All pages are sent together.
+                        Capture or upload up to 6 pages. Images are compressed
+                        before uploading to support mobile devices.
                       </p>
                     </div>
                     <span className="ai-tag">AI GENERATION</span>
@@ -1699,7 +1819,9 @@ const exportPDF = async (questions, title = 'Tamil Questions') => {
                       <CircleHelp size={24} />
                     </div>
                     <h3>No questions in this chapter</h3>
-                    <p>Add one manually or generate questions from textbook images.</p>
+                    <p>
+                      Add one manually or generate questions from textbook images.
+                    </p>
                     <button className="button primary" onClick={openAddQuestion}>
                       <Plus size={16} /> Add first question
                     </button>
