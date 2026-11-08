@@ -1723,8 +1723,6 @@ const MAX_IMAGES = 6;
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_SIZE = 20 * 1024 * 1024;
 
-const MAX_QUESTIONS = 10;
-
 const MAX_REQUESTS_PER_MINUTE = 3;
 const REQUEST_WINDOW = 60 * 1000;
 const MAX_CONCURRENT_GENERATIONS = 2;
@@ -1873,7 +1871,7 @@ const upload = multer({
 });
 
 // --------------------------------------------------
-// HELPERS
+// GENERAL HELPERS
 // --------------------------------------------------
 
 const isValidId = id =>
@@ -1884,6 +1882,13 @@ const getChapter = async id => {
 
   return Chapter.findById(id);
 };
+
+const sleep = ms =>
+  new Promise(resolve => setTimeout(resolve, ms));
+
+// --------------------------------------------------
+// QUESTION VALIDATION
+// --------------------------------------------------
 
 const validateQuestion = question => {
   if (
@@ -1917,6 +1922,10 @@ const validateQuestion = question => {
   return null;
 };
 
+// --------------------------------------------------
+// JSON PARSING
+// --------------------------------------------------
+
 const parseGeminiJSON = response => {
   const responseText = response.text;
 
@@ -1927,14 +1936,50 @@ const parseGeminiJSON = response => {
   try {
     return JSON.parse(responseText);
   } catch {
-    console.error('Invalid Gemini JSON:', responseText);
+    // Handle accidental Markdown fences.
+    const cleaned = responseText
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '')
+      .trim();
 
-    throw new Error('Gemini returned invalid JSON.');
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      console.error(
+        'Gemini returned invalid JSON:',
+        responseText
+      );
+
+      throw new Error('Gemini returned invalid JSON.');
+    }
   }
 };
 
-const sleep = ms =>
-  new Promise(resolve => setTimeout(resolve, ms));
+// --------------------------------------------------
+// DUPLICATE DETECTION
+// --------------------------------------------------
+
+const normalizeText = value =>
+  String(value || '')
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[.,!?;:'"“”‘’()[\]{}<>«»]/g, '')
+    .replace(/\s+/g, '')
+    .trim();
+
+const isDuplicateQuestion = (question, existingQuestions) => {
+  const newQuestion = normalizeText(question.questionText);
+
+  if (!newQuestion) return true;
+
+  return existingQuestions.some(existing => {
+    const oldQuestion = normalizeText(
+      existing.questionText
+    );
+
+    return oldQuestion === newQuestion;
+  });
+};
 
 // --------------------------------------------------
 // SOURCE EVIDENCE VALIDATION
@@ -1942,6 +1987,7 @@ const sleep = ms =>
 
 const normalizeEvidence = value =>
   String(value || '')
+    .normalize('NFC')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -2002,7 +2048,6 @@ const generateWithRetry = async (
   for (let attempt = 0; ; attempt++) {
     try {
       return await aiInstance.models.generateContent(payload);
-
     } catch (error) {
       const info = getGeminiError(error);
 
@@ -2050,27 +2095,235 @@ const prepareImages = async files => {
 
   const imageParts = [];
 
-  for (const file of files) {
+  for (let index = 0; index < files.length; index++) {
+    const file = files[index];
+
     const compressedBuffer = await sharp(file.buffer)
       .rotate()
       .resize({
-        width: 1600,
-        height: 1600,
+        width: 2200,
+        height: 2200,
         fit: 'inside',
         withoutEnlargement: true
       })
-      .jpeg({ quality: 85 })
+      .jpeg({ quality: 90 })
       .toBuffer();
 
     imageParts.push({
-      inlineData: {
-        data: compressedBuffer.toString('base64'),
-        mimeType: 'image/jpeg'
+      pageNumber: index + 1,
+
+      imagePart: {
+        inlineData: {
+          data: compressedBuffer.toString('base64'),
+          mimeType: 'image/jpeg'
+        }
       }
     });
   }
 
   return imageParts;
+};
+
+// --------------------------------------------------
+// GEMINI PROMPT
+// --------------------------------------------------
+
+const createPagePrompt = pageNumber => `
+You are an experienced CBSE Class 10 Tamil teacher,
+Tamil textbook specialist, and board-examination question setter.
+
+TASK:
+Read the ENTIRE uploaded Tamil textbook page carefully.
+
+This is page ${pageNumber} of the uploaded textbook material.
+
+Your task is to identify and generate EVERY DISTINCT,
+VALID, EXAM-WORTHY multiple-choice question that can be
+created from the readable content on THIS PAGE.
+
+IMPORTANT:
+There is NO fixed question count.
+
+Do not stop after 5 or 10 questions.
+Do not artificially limit the number of questions.
+Generate as many different valid questions as the page supports.
+
+Read every readable part of the page, including:
+
+- Poem lines
+- Poet and author names
+- Literary references
+- Word meanings
+- Explanations
+- Central ideas
+- Events and facts
+- Names and places
+- Important expressions
+- Literary concepts
+- Explicitly stated information
+- Details in notes and side sections
+
+SOURCE RULES:
+
+1. Use ONLY information visibly present in the uploaded image.
+2. Do not use outside knowledge, memory, websites or assumptions.
+3. Never invent a poet, author, title, line, meaning or fact.
+4. Every correct answer must be directly supported by the image.
+5. Do not create questions from blurred, cropped or unreadable text.
+6. Do not ask the same fact in different wording.
+7. Use correct, natural Tamil spelling and grammar.
+8. Questions must be suitable for CBSE Class 10 Tamil.
+9. Each question must have exactly FOUR meaningful Tamil options.
+10. Exactly ONE option must be correct.
+11. The other three options must be plausible but clearly incorrect.
+12. Do not use "all of the above" or "none of the above".
+13. Do not make the correct answer noticeably longer than the others.
+14. Do not create vague or ambiguous questions.
+15. Do not generate questions that require outside literary knowledge.
+16. Cover different testable details throughout the page.
+17. Do not ignore the bottom or side portions of the image.
+18. Do not generate duplicate questions.
+19. Generate fewer questions only when the page genuinely
+    contains fewer distinct, clearly readable facts.
+20. Accuracy is more important than quantity.
+
+QUESTION TYPES TO CONSIDER:
+
+- யார்?
+- எது?
+- எங்கு?
+- எப்போது?
+- எதனால்?
+- எவ்வாறு?
+- பொருள் தருக
+- சரியான கூற்றைத் தேர்ந்தெடுக்க
+- தவறான கூற்றைத் தேர்ந்தெடுக்க
+- ஆசிரியர் / கவிஞர் தொடர்பான வினாக்கள்
+- பாடல் வரி தொடர்பான வினாக்கள்
+- இலக்கியக் குறிப்புகள்
+- கருத்து மற்றும் விளக்கம் தொடர்பான வினாக்கள்
+
+Do not force every question type. Use only those supported by the page.
+
+SOURCE EVIDENCE:
+
+For every question, provide sourceEvidence.
+
+sourceEvidence must be an exact, continuous Tamil quotation
+copied from the readable text in the image.
+
+Do not paraphrase it.
+Do not translate it.
+Do not invent missing words.
+
+The exact sourceEvidence must also appear in the returned passage.
+
+PASSAGE:
+
+The passage must contain the readable Tamil textbook text
+from this page as accurately as possible.
+
+Do not reconstruct missing words.
+Do not invent connecting sentences.
+Do not add outside explanations.
+
+OUTPUT:
+
+Return ONLY valid JSON.
+Do not use Markdown code fences.
+Do not add explanations outside JSON.
+
+Use this exact structure:
+
+{
+  "passage": "Readable Tamil source text copied from this page",
+  "questions": [
+    {
+      "questionText": "தமிழில் வினா",
+      "options": [
+        "முதல் விடை",
+        "இரண்டாம் விடை",
+        "மூன்றாம் விடை",
+        "நான்காம் விடை"
+      ],
+      "correctOptionIndex": 0,
+      "sourceEvidence": "பாடப்பகுதியில் இருந்து அப்படியே எடுக்கப்பட்ட ஆதார வரி"
+    }
+  ]
+}
+
+If the image has no readable testable information, return:
+
+{
+  "passage": "",
+  "questions": []
+}
+`;
+
+// --------------------------------------------------
+// PROCESS ONE IMAGE AT A TIME
+// --------------------------------------------------
+
+const generateQuestionsForPage = async (
+  page,
+  pageIndex
+) => {
+  console.log(
+    `Generating questions from page ${page.pageNumber}...`
+  );
+
+  const response = await generateWithRetry(ai, {
+    model: MODEL,
+
+    contents: [{
+      role: 'user',
+
+      parts: [
+        {
+          text: createPagePrompt(page.pageNumber)
+        },
+        page.imagePart
+      ]
+    }],
+
+    config: {
+      responseMimeType: 'application/json',
+      temperature: 0.1,
+      maxOutputTokens: MAX_OUTPUT_TOKENS
+    }
+  });
+
+  const metadata = response.usageMetadata || {};
+
+  const usage = {
+    inputTokens: metadata.promptTokenCount || 0,
+    outputTokens: metadata.candidatesTokenCount || 0,
+    totalTokens: metadata.totalTokenCount ||
+      (metadata.promptTokenCount || 0) +
+      (metadata.candidatesTokenCount || 0)
+  };
+
+  const generated = parseGeminiJSON(response);
+
+  if (
+    typeof generated.passage !== 'string' ||
+    !Array.isArray(generated.questions)
+  ) {
+    throw new Error(
+      `Gemini returned an invalid response for page ${page.pageNumber}.`
+    );
+  }
+
+  console.log(
+    `Page ${page.pageNumber}: Gemini generated ${generated.questions.length} question(s).`
+  );
+
+  return {
+    pageNumber: page.pageNumber,
+    passage: generated.passage,
+    questions: generated.questions,
+    usage
+  };
 };
 
 // --------------------------------------------------
@@ -2135,7 +2388,11 @@ app.get('/api/usage', (req, res) => {
       ),
 
       maxImagesPerRequest: MAX_IMAGES,
-      maxQuestionsPerGeneration: MAX_QUESTIONS
+
+      // No fixed question limit.
+      maxQuestionsPerGeneration: null,
+
+      generationMode: 'one Gemini request per image'
     },
 
     geminiQuota: {
@@ -2501,93 +2758,6 @@ app.delete(
 );
 
 // --------------------------------------------------
-// GEMINI PROMPT
-// --------------------------------------------------
-
-const SINGLE_PASS_PROMPT = `
-You are an experienced CBSE Class 10 Tamil teacher, textbook specialist,
-and board-examination question setter.
-
-TASK:
-Carefully read EVERY uploaded Tamil textbook page image. Treat all images
-as pages from the same supplied lesson unless the content clearly shows
-otherwise. Read the printed Tamil text, including poem lines, names,
-literary references, meanings, and explanations that are clearly legible.
-
-Generate up to ${MAX_QUESTIONS} high-quality CBSE Class 10 Tamil பாடல் வினா
-multiple-choice questions. Use the available textbook content efficiently.
-Do not stop after only a few questions if the images contain enough distinct,
-clear, testable facts for more questions.
-
-STRICT SOURCE AND ACCURACY RULES:
-1. Use ONLY information visibly present in the uploaded textbook images.
-2. Never use outside knowledge, memory, websites, or assumptions.
-3. Never invent a poet, author, title, line, meaning, event, or fact.
-4. Every correct answer must be directly and unambiguously supported by
-   the uploaded text.
-5. Do not create a question from blurred, cropped, hidden, or unreadable text.
-6. Do not ask the same fact in different wording. Questions must test
-   different details from the supplied pages.
-7. Use correct, natural Tamil spelling and grammar.
-8. Keep each question clear, concise, and appropriate for CBSE Class 10.
-9. Provide exactly four meaningful Tamil answer options for every question.
-10. Exactly one option must be correct. The other three must be plausible
-    but clearly incorrect according to the supplied pages.
-11. Do not make the correct answer noticeably longer or more detailed than
-    the distractors merely to reveal it.
-12. Do not use "all of the above" or "none of the above".
-13. The correctOptionIndex must point to the one correct option:
-    0 = first option, 1 = second option, 2 = third option, 3 = fourth option.
-14. sourceEvidence MUST be an exact, continuous Tamil quotation copied from
-    the readable textbook text. Do not paraphrase it. Do not add quotation
-    marks unless they occur in the textbook.
-15. The exact sourceEvidence text MUST also appear in the returned passage.
-16. The passage must contain only readable text copied from the uploaded
-    pages. Do not reconstruct missing words or invent connecting sentences.
-17. Aim for a balanced variety of questions across all uploaded pages and
-    all distinct testable content.
-18. Generate fewer than ${MAX_QUESTIONS} only when the source genuinely does
-    not contain enough distinct, clearly readable information.
-19. Never sacrifice accuracy just to reach the maximum question count.
-
-QUESTION QUALITY:
-- Prefer questions about the poem/text, poet or author when explicitly
-  stated, meanings, ideas, images, literary details, and facts explicitly
-  taught in the supplied pages.
-- Avoid vague questions whose answers could reasonably be interpreted
-  in more than one way.
-- Avoid questions whose answers require outside literary knowledge.
-- Ensure the four options are distinct.
-
-OUTPUT:
-Return ONLY valid JSON. Do not use Markdown fences or add explanations.
-
-Use this exact structure:
-{
-  "passage": "Readable Tamil source text copied from the uploaded pages",
-  "questions": [
-    {
-      "questionText": "தமிழில் வினா",
-      "options": [
-        "முதல் விடை",
-        "இரண்டாம் விடை",
-        "மூன்றாம் விடை",
-        "நான்காம் விடை"
-      ],
-      "correctOptionIndex": 0,
-      "sourceEvidence": "பாடப்பகுதியில் இருந்து அப்படியே எடுக்கப்பட்ட ஆதார வரி"
-    }
-  ]
-}
-
-If no reliable questions can be generated, return:
-{
-  "passage": "",
-  "questions": []
-}
-`;
-
-// --------------------------------------------------
 // QUESTION GENERATION ROUTE
 // --------------------------------------------------
 
@@ -2598,6 +2768,7 @@ app.post(
 
   async (req, res) => {
     let acquiredSlot = false;
+
     const requestStartedAt = Date.now();
 
     usageStats.totalAttempts++;
@@ -2605,7 +2776,7 @@ app.post(
       new Date().toISOString();
 
     try {
-      // Concurrency protection
+      // Concurrency protection.
 
       if (
         usageStats.activeGenerations >=
@@ -2624,7 +2795,7 @@ app.post(
       usageStats.activeGenerations++;
       acquiredSlot = true;
 
-      // Find chapter
+      // Find chapter.
 
       const chapter = await getChapter(
         req.params.chapterId
@@ -2640,7 +2811,7 @@ app.post(
         });
       }
 
-      // Validate uploaded images
+      // Validate images.
 
       if (!req.files || req.files.length === 0) {
         usageStats.failedGenerations++;
@@ -2652,165 +2823,214 @@ app.post(
         });
       }
 
-      // Compress images
-
       console.log(
-        `Processing ${req.files.length} textbook image(s)...`
+        `Starting generation for ${req.files.length} image(s)...`
       );
 
-      const imageParts = await prepareImages(req.files);
+      // Prepare all images.
 
-      usageStats.totalImagesProcessed +=
-        req.files.length;
+      const pages = await prepareImages(req.files);
 
-      // Send all page images in one request
+      usageStats.totalImagesProcessed += pages.length;
 
-      console.log(
-        `Sending request to Gemini model: ${MODEL}`
-      );
+      // Accumulate all page results.
 
-      const generationResponse = await generateWithRetry(
-        ai,
-        {
-          model: MODEL,
+      const allGeneratedQuestions = [];
+      const allPassages = [];
 
-          contents: [{
-            role: 'user',
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+      let totalTokens = 0;
 
-            parts: [
-              { text: SINGLE_PASS_PROMPT },
-              ...imageParts
-            ]
-          }],
+      let successfulPages = 0;
+      let failedPages = 0;
 
-          config: {
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-            maxOutputTokens: MAX_OUTPUT_TOKENS
+      // IMPORTANT:
+      // Process every image separately.
+      // No question-count limit is applied.
+
+      for (let index = 0; index < pages.length; index++) {
+        const page = pages[index];
+
+        try {
+          const result = await generateQuestionsForPage(
+            page,
+            index
+          );
+
+          successfulPages++;
+
+          if (result.passage.trim()) {
+            allPassages.push({
+              pageNumber: result.pageNumber,
+              passage: result.passage.trim()
+            });
           }
+
+          totalInputTokens += result.usage.inputTokens;
+          totalOutputTokens += result.usage.outputTokens;
+          totalTokens += result.usage.totalTokens;
+
+          // Validate every question from this page.
+
+          for (const question of result.questions) {
+            const validationError =
+              validateQuestion(question);
+
+            if (validationError) {
+              console.warn(
+                `Rejected question from page ${page.pageNumber}:`,
+                validationError
+              );
+
+              continue;
+            }
+
+            if (
+              typeof question.sourceEvidence !== 'string' ||
+              !question.sourceEvidence.trim()
+            ) {
+              console.warn(
+                `Rejected question from page ${page.pageNumber}: missing evidence.`
+              );
+
+              continue;
+            }
+
+            if (
+              !hasPassageEvidence(
+                result.passage,
+                question.sourceEvidence
+              )
+            ) {
+              console.warn(
+                `Rejected question from page ${page.pageNumber}: evidence not found in passage.`
+              );
+
+              continue;
+            }
+
+            allGeneratedQuestions.push({
+              questionText: question.questionText.trim(),
+
+              options: question.options.map(
+                option => option.trim()
+              ),
+
+              correctOptionIndex:
+                question.correctOptionIndex,
+
+              sourceEvidence:
+                question.sourceEvidence.trim(),
+
+              pageNumber: page.pageNumber
+            });
+          }
+
+          console.log(
+            `Page ${page.pageNumber} completed. Valid questions collected: ${allGeneratedQuestions.length}`
+          );
+
+        } catch (pageError) {
+          failedPages++;
+
+          console.error(
+            `Failed to process page ${page.pageNumber}:`,
+            pageError
+          );
+
+          // Continue with the remaining pages.
+          // One failed image must not stop the other images.
         }
-      );
+      }
 
-      // Record token usage
+      // Record token usage.
 
-      const metadata =
-        generationResponse.usageMetadata || {};
-
-      const inputTokens =
-        metadata.promptTokenCount || 0;
-
-      const outputTokens =
-        metadata.candidatesTokenCount || 0;
-
-      const totalTokens =
-        metadata.totalTokenCount ||
-        inputTokens + outputTokens;
-
-      usageStats.totalInputTokens += inputTokens;
-      usageStats.totalOutputTokens += outputTokens;
+      usageStats.totalInputTokens += totalInputTokens;
+      usageStats.totalOutputTokens += totalOutputTokens;
       usageStats.totalTokens += totalTokens;
 
-      // Parse JSON
+      // If every page failed, return an error.
 
-      const generated =
-        parseGeminiJSON(generationResponse);
+      if (successfulPages === 0) {
+        usageStats.failedGenerations++;
 
-      if (
-        typeof generated.passage !== 'string' ||
-        !Array.isArray(generated.questions)
-      ) {
-        throw new Error(
-          'Gemini returned an invalid question structure.'
-        );
+        return res.status(503).json({
+          success: false,
+          code: 'ALL_PAGES_FAILED',
+          error: 'Unable to process the uploaded images.',
+          message:
+            'Gemini could not process any of the uploaded pages. Please try again.'
+        });
       }
 
-      // Validate questions
+      // Remove duplicates within this generation
+      // and against questions already saved in the chapter.
 
-      const rejectedQuestions = [];
+      const uniqueQuestions = [];
+      const duplicateCheck = [
+        ...(chapter.questions || []).map(question => ({
+          questionText: question.questionText
+        }))
+      ];
 
-      const verifiedQuestions =
-        generated.questions.filter((question, index) => {
-          const validationError =
-            validateQuestion(question);
+      for (const question of allGeneratedQuestions) {
+        if (
+          isDuplicateQuestion(
+            question,
+            duplicateCheck
+          )
+        ) {
+          continue;
+        }
 
-          if (validationError) {
-            rejectedQuestions.push({
-              index,
-              reason: validationError
-            });
+        uniqueQuestions.push(question);
 
-            return false;
-          }
-
-          if (
-            typeof question.sourceEvidence !== 'string' ||
-            !question.sourceEvidence.trim()
-          ) {
-            rejectedQuestions.push({
-              index,
-              reason: 'Missing source evidence.'
-            });
-
-            return false;
-          }
-
-          if (
-            !hasPassageEvidence(
-              generated.passage,
-              question.sourceEvidence
-            )
-          ) {
-            rejectedQuestions.push({
-              index,
-              reason: 'Source evidence was not found in passage.'
-            });
-
-            return false;
-          }
-
-          return true;
-        }).slice(0, MAX_QUESTIONS);
-
-      if (rejectedQuestions.length > 0) {
-        console.warn(
-          'Some generated questions were rejected:',
-          rejectedQuestions
-        );
+        duplicateCheck.push({
+          questionText: question.questionText
+        });
       }
 
-      if (verifiedQuestions.length === 0) {
+      // If no valid new questions remain.
+
+      if (uniqueQuestions.length === 0) {
         usageStats.failedGenerations++;
 
         return res.status(422).json({
           success: false,
-          code: 'NO_VALID_QUESTIONS',
-          error: 'No valid questions could be generated.',
+          code: 'NO_NEW_VALID_QUESTIONS',
+          error: 'No new valid questions were generated.',
           message:
-            'The generated questions did not pass the structure and source-evidence checks. Please upload clearer textbook images and try again.',
-          generatedCount: generated.questions.length,
-          rejectedCount: rejectedQuestions.length,
-          savedCount: 0
+            'The images were processed, but no new questions passed validation or all generated questions were already present in this chapter.',
+
+          imagesProcessed: pages.length,
+          successfulPages,
+          failedPages,
+
+          generatedCount: allGeneratedQuestions.length,
+          duplicateCount:
+            allGeneratedQuestions.length,
+          savedCount: 0,
+
+          usage: {
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            totalTokens
+          }
         });
       }
 
-      // Prepare questions for MongoDB
+      // Remove internal pageNumber before saving.
+      // Keep the original Chapter question structure.
 
-      const questionsToSave =
-        verifiedQuestions.map(question => ({
-          questionText: question.questionText.trim(),
+      const questionsToSave = uniqueQuestions.map(question => ({
+        questionText: question.questionText,
+        options: question.options,
+        correctOptionIndex: question.correctOptionIndex,
+        sourceEvidence: question.sourceEvidence
+      }));
 
-          options: question.options.map(
-            option => option.trim()
-          ),
-
-          correctOptionIndex:
-            question.correctOptionIndex,
-
-          sourceEvidence:
-            question.sourceEvidence.trim()
-        }));
-
-      // Save questions
+      // Save every valid question.
 
       chapter.questions.push(...questionsToSave);
 
@@ -2821,7 +3041,7 @@ app.post(
           -questionsToSave.length
         );
 
-      // Update statistics
+      // Update usage statistics.
 
       const generationTimeMs =
         Date.now() - requestStartedAt;
@@ -2835,10 +3055,10 @@ app.post(
         generationTimeMs;
 
       console.log(
-        `Successfully saved ${savedQuestions.length} question(s).`
+        `Generation completed. Images: ${pages.length}, valid questions: ${allGeneratedQuestions.length}, unique questions saved: ${savedQuestions.length}`
       );
 
-      // Success response
+      // Return results.
 
       return res.status(201).json({
         success: true,
@@ -2846,14 +3066,28 @@ app.post(
         message:
           'Questions generated and saved successfully.',
 
+        imagesProcessed: pages.length,
+        successfulPages,
+        failedPages,
+
         generatedCount:
-          generated.questions.length,
+          allGeneratedQuestions.length,
 
         savedCount:
           savedQuestions.length,
 
+        duplicateCount:
+          allGeneratedQuestions.length -
+          uniqueQuestions.length,
+
         passage:
-          generated.passage,
+          allPassages
+            .map(item =>
+              `Page ${item.pageNumber}\n${item.passage}`
+            )
+            .join('\n\n'),
+
+        passages: allPassages,
 
         questions:
           savedQuestions,
@@ -2865,14 +3099,11 @@ app.post(
           chapter.title,
 
         usage: {
-          inputTokens,
-          outputTokens,
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
           totalTokens,
           generationTimeMs
-        },
-
-        rejectedCount:
-          rejectedQuestions.length
+        }
       });
 
     } catch (error) {
@@ -2999,6 +3230,8 @@ const startServer = async () => {
       console.log(`Gemini model: ${MODEL}`);
       console.log('Usage monitoring: /api/usage');
       console.log('Health monitoring: /api/health');
+      console.log('Generation mode: one request per image');
+      console.log('Question count: no fixed limit');
     });
 
   } catch (error) {
