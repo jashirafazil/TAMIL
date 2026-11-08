@@ -1167,7 +1167,7 @@ export default function App() {
 
       const footer = document.createElement('div');
       footer.className = 'pdf-footer';
-      footer.textContent = 'BLOSSOM PUBLIC SCHOOL  •  CLASS X  •  TAMIL';
+      footer.textContent = 'BLOSSOM PUBLIC SCHOOL  •  CLASS X  •  TAMIL  •  பாடல் வினா';
 
       documentContent.appendChild(footer);
       pdfContainer.appendChild(documentContent);
