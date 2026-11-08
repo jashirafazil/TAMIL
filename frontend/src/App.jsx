@@ -346,10 +346,7 @@ export default function App() {
       setLoadingChapters(false);
     }
   }, []);
-  // --------------------------------------------------
-  // AI USAGE & SERVER HEALTH
-  // --------------------------------------------------
-
+  
   // --------------------------------------------------
   // AI USAGE & SERVER HEALTH
   // --------------------------------------------------
@@ -1116,7 +1113,7 @@ export default function App() {
 
       const subtitle = document.createElement('p');
       subtitle.className = 'pdf-school-subtitle';
-      subtitle.textContent = 'QUESTION PAPER';
+      subtitle.textContent = 'பாடல் வினா';
 
       header.append(schoolName, subtitle);
 
