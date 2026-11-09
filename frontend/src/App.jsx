@@ -346,7 +346,7 @@ export default function App() {
       setLoadingChapters(false);
     }
   }, []);
-  
+
   // --------------------------------------------------
   // AI USAGE & SERVER HEALTH
   // --------------------------------------------------
@@ -1061,7 +1061,7 @@ export default function App() {
         }
 
         .pdf-question-text {
-          font-size: 13px;
+          font-size: 15;
           font-weight: 700;
           line-height: 1.55;
           margin-bottom: 5px;
@@ -1078,7 +1078,7 @@ export default function App() {
         }
 
         .pdf-option {
-          font-size: 11px;
+          font-size: 13px;
           line-height: 1.5;
           overflow-wrap: anywhere;
           word-break: normal;
@@ -1095,6 +1095,7 @@ export default function App() {
           color: #666;
           margin-top: 12px;
           padding-top: 7px;
+          padding-bottom: 7px;
           border-top: 1px solid #ddd;
         }
       `;
