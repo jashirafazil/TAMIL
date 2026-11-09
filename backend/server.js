@@ -2580,6 +2580,39 @@ app.delete('/api/chapters/:chapterId', async (req, res) => {
 // QUESTION ROUTES
 // --------------------------------------------------
 
+app.delete('/api/chapters/:chapterId/questions', async (req, res) => {
+  try {
+    const chapter = await getChapter(req.params.chapterId);
+
+    if (!chapter) {
+      return res.status(404).json({
+        success: false,
+        error: 'Chapter not found.'
+      });
+    }
+
+    const deletedCount = chapter.questions.length;
+
+    chapter.questions = [];
+
+    await chapter.save();
+
+    return res.json({
+      success: true,
+      message: 'All questions deleted successfully.',
+      deletedCount
+    });
+
+  } catch (error) {
+    console.error('Delete all questions error:', error);
+
+    return res.status(500).json({
+      success: false,
+      error: 'Unable to delete questions.'
+    });
+  }
+});
+
 app.post('/api/chapters/:chapterId/questions', async (req, res) => {
   try {
     const chapter = await getChapter(req.params.chapterId);

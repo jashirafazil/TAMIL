@@ -2468,3 +2468,455 @@ button {
 }
 
 
+/* =========================================
+   SMART PANEL
+========================================= */
+
+.smart-panel {
+  margin: 22px 0;
+}
+
+.smart-panel .panel-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.smart-panel-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  margin: 20px 0;
+  padding-bottom: 10px;
+}
+
+.smart-panel-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 9px;
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.smart-panel-tabs button.active {
+  background: var(--surface-2);
+  color: var(--primary);
+  border-color: var(--border);
+}
+
+.smart-panel-tabs button span {
+  display: grid;
+  place-items: center;
+  min-width: 21px;
+  height: 21px;
+  padding: 0 5px;
+  border-radius: 20px;
+  background: var(--surface-3);
+  font-size: 11px;
+}
+
+.smart-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.smart-editor-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.smart-editor-heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.smart-editor-heading p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.smart-editor-icon {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--primary);
+}
+
+.smart-textarea {
+  min-height: 150px;
+  line-height: 1.7;
+}
+
+.smart-editor-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.smart-editor-footer > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.smart-lesson-view {
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
+}
+
+.smart-content-section {
+  padding: 17px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.smart-content-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .7px;
+  margin-bottom: 12px;
+}
+
+.smart-rich-text {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.smart-key-points {
+  padding-left: 22px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.smart-exam-tip {
+  padding: 17px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.smart-exam-tip p {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.smart-updated {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 5px;
+}
+
+.smart-empty {
+  min-height: 170px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--muted);
+  gap: 8px;
+  padding: 25px;
+}
+
+.smart-empty h3 {
+  color: var(--text);
+  font-size: 15px;
+  margin: 4px 0 0;
+}
+
+.smart-empty p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.smart-storage-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  margin-top: 18px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.smart-storage-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* =========================================
+   DISCUSSION
+========================================= */
+
+.discussion-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.doubt-composer {
+  padding: 17px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.discussion-submit {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.discussion-submit > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.discussion-list-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.discussion-list-heading h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.discussion-list-heading > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.discussion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.discussion-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--surface);
+}
+
+.discussion-item-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.discussion-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  color: var(--primary);
+}
+
+.discussion-author {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.discussion-author strong {
+  font-size: 12px;
+}
+
+.discussion-author span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.discussion-question {
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 13px 0;
+}
+
+.teacher-reply {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 9px;
+  padding: 13px;
+  margin-top: 12px;
+}
+
+.teacher-reply-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--primary);
+  letter-spacing: .6px;
+}
+
+.teacher-reply p {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 9px 0 0;
+}
+
+.teacher-reply-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.teacher-reply-editor textarea {
+  width: 100%;
+}
+
+.discussion-empty {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+}
+
+/* =========================================
+   ALL CHAPTER PDF EXPORT
+========================================= */
+
+.overview-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.all-chapters-export {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  flex-wrap: wrap;
+  padding: 16px;
+  margin: 18px 0;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface);
+}
+
+.all-chapters-export > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.all-chapters-export strong {
+  font-size: 13px;
+}
+
+.all-chapters-export p {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+@media (max-width: 640px) {
+  .overview-actions {
+    width: 100%;
+  }
+
+  .overview-actions .button {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .all-chapters-export {
+    align-items: stretch;
+  }
+
+  .all-chapters-export > .button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .smart-editor-footer {
+    align-items: stretch;
+  }
+
+  .smart-editor-footer .button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .discussion-submit {
+    align-items: stretch;
+  }
+
+  .discussion-submit .button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .smart-panel-tabs button {
+    flex: 1;
+    justify-content: center;
+  }
+}
+
